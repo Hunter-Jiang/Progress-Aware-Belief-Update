@@ -2,6 +2,10 @@
 
 Official implementation of **PABU: Progress-Aware Belief Update for Efficient LLM Agents**.
 
+<p align="center">
+  📃 <a href="" target="_blank">Paper</a > • 🌐 <a href="" target="_blank">Project Page</a > • 🤗 <a href="https://huggingface.co/datasets/HunterJiang97/PABU-Data" target="_blank">PABU-Data</a > • 🤗 <a href="https://huggingface.co/HunterJiang97/PABU-Agent-8B" target="_blank">Model (PABU-Agent-8B)</a ><br>
+</p >
+
 ---
 
 ## Overview
@@ -80,32 +84,35 @@ The full environment scope is summarized below.
 | Movie       | 215   | 1,682  | 20   | [Movie-Repo](https://github.com/hkust-nlp/AgentBoard)    | [agentenv-tool](https://github.com/WooooDyy/AgentGym/tree/main/agentenv-tool)           |
 
 ---
+## Running PABU: Pretrained Models, Training, and Evaluation
 
-## Evaluation
+This section summarizes the full workflow for using PABU. You may optionally start from pretrained checkpoints (recommended for quick evaluation), or train models from scratch before running evaluation.
 
-```bash
-bash evaluation.sh
-```
+### (Optional) Download Pretrained Checkpoints
 
----
-
-## Training
-
-```bash
-bash training.sh
-```
-
----
-
-## Pretrained Checkpoints (Fallback)
-
-If you prefer to skip training and directly evaluate pretrained models:
+If you prefer to skip training or need a fallback checkpoint for evaluation:
 
 ```bash
 hf auth
 export HF_HUB_ENABLE_HF_TRANSFER=1
 hf download HunterJiang97/PABU-Agent-8B
 hf download HunterJiang97/PABU-Data
+```
+
+### Training
+
+To train PABU from scratch:
+
+```bash
+bash training.sh
+```
+
+### Evaluation
+
+To evaluate a trained or pretrained model:
+
+```bash
+bash evaluation.sh
 ```
 
 ---
