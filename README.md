@@ -3,10 +3,11 @@
 Official implementation of **PABU: Progress-Aware Belief Update for Efficient LLM Agents**.
 
 <p align="center">
-  📃 <a href="" target="_blank">Paper</a > • 🌐 <a href="" target="_blank">Project Page</a > • 🤗 <a href="https://huggingface.co/datasets/HunterJiang97/PABU-Data" target="_blank">PABU-Data</a > • 🤗 <a href="https://huggingface.co/HunterJiang97/PABU-Agent-8B" target="_blank">Model (PABU-Agent-8B)</a ><br>
-</p >
+  📃 <a href="https://arxiv.org/pdf/2602.09138" target="_blank">Paper</a > • 🌐 <a href="https://pabu-agent.github.io/" target="_blank">Project Page</a > • 🤗 <a href="https://huggingface.co/datasets/HunterJiang97/PABU-Data" target="_blank">PABU-Data</a > • 🤗 <a href="https://huggingface.co/HunterJiang97/PABU-Agent-8B" target="_blank">Model (PABU-Agent-8B)</a ><br>
+</p>
 
----
+## News
+- [2026/02/11] We post our paper on [ArXiv](https://arxiv.org/abs/2602.09138) with our code, including parallel agent enviornments, [model checkpoints](https://huggingface.co/HunterJiang97/PABU-Agent-8B), [dataset](https://huggingface.co/datasets/HunterJiang97/PABU-Data), and training implementations! We welcome feedbacks and issues from the community!
 
 ## Overview
 
@@ -122,5 +123,13 @@ bash evaluation.sh
 If you find this work useful, please cite our paper:
 
 ```bibtex
-Appearing Soon!
+@misc{jiang2026pabuprogressawarebeliefupdate,
+      title={PABU: Progress-Aware Belief Update for Efficient LLM Agents}, 
+      author={Haitao Jiang and Lin Ge and Hengrui Cai and Rui Song},
+      year={2026},
+      eprint={2602.09138},
+      archivePrefix={arXiv},
+      primaryClass={cs.AI},
+      url={https://arxiv.org/abs/2602.09138}, 
+}
 ```

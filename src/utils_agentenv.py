@@ -34,6 +34,294 @@ class StepOutput:
     reward: float
     done: bool
 
+class Env_Conn_Full:
+    def __init__(
+        self,
+        client,
+        idx,
+        save_path="traj",
+        max_iter=30,
+        game_type="alfworld",
+        print_order = "goal|plan|observation|memory|action|attempted"
+    ):
+        # save parameters
+        self.client = client
+        self.idx = idx
+        self.save_path = save_path
+        self.max_iter = max_iter
+        self.game_type = game_type
+        self.done = False
+
+        # init
+        msg = self.client.reset(idx)
+        if self.game_type == "alfworld":
+            self.task_type = msg["task_type"]
+            self.goal = msg["observation"].split("\n")[-1].split(":")[-1].strip()
+            self.observation = msg["observation"].split("\n")[0].strip().split("Looking quickly around you")[0].strip()
+        elif self.game_type == "sciworld":
+            self.task_type = msg["task_name"] + "_" + str(msg["var_num"]) + "_" + str(idx)
+            self.goal = msg["task_description"]
+            self.observation = msg["observation"]
+        elif self.game_type == "babyai":
+            self.task_type = "babyai_" + str(idx)
+            self.goal = msg["observation"].split("\n")[0].split(":")[-1].strip()
+            self.observation = msg["observation"].split("\n")[1]
+        elif self.game_type == "wordle":
+            self.task_type = "wordle_" + str(idx)
+            obs = client.observe()
+            self.goal = "\n".join(obs.split("\n")[:7]).strip()
+            self.observation = "None"
+        elif self.game_type == "maze":
+            self.task_type = "maze_" + str(idx)
+            self.observation = msg["observation"].split("\n")[-1]
+            self.goal = "\n".join(msg["observation"].split("\n")[:2])
+        elif self.game_type == "movie":
+            self.task_type = "movie_" + str(idx)
+            self.observation = "None"
+            self.goal = msg.split("You should perform actions to accomplish the goal:")[-1].replace("\nGive me one action.", "").strip()
+        elif self.game_type == "weather":
+            self.task_type = "weather_" + str(idx)
+            self.observation = "None"
+            self.goal = msg.split("You should perform actions to accomplish the goal:")[-1].replace("\nGive me one action.", "").strip()
+        elif self.game_type == "todo":
+            self.task_type = "todo_" + str(idx)
+            self.observation = "None"
+            self.goal = msg.split("You should perform actions to accomplish the goal:")[-1].replace("\nGive me one action.", "").strip()
+        elif self.game_type == "textcraft":
+            self.task_type = "textcraft" + str(idx)
+            self.goal = msg["observation"].split("\n")[-1].replace("Goal:", "").strip()
+            self.observation = "None"
+        
+        # subgoal
+        self.plan = None 
+        # attempts
+        self.plan_history = None
+
+        # observe
+        msg = self.client.observe()
+        if self.game_type in ["alfworld"]:
+            self.action = msg.split("AVAILABLE ACTIONS:")[-1].strip()
+        elif self.game_type in ["babyai"]:
+            self.action = (
+                msg.split("Available actions: [")[-1][:-1]
+                .replace('"', "")
+                .strip()
+                .strip()
+            )
+        elif self.game_type in ["sciworld"]:
+            self.action = self.client.step("look around").state
+        elif self.game_type in ["wordle"]:
+            self.action = obs.split("```")[1].strip()
+        elif self.game_type in ["textcraft"]: #msg.find("Crafting commands:") > -1:
+            self.action = msg.split("Crafting commands:")[-1].split("Goal")[0].strip()
+        elif self.game_type in ["maze"]:
+            self.action = "move up, move down, move left, move right"
+        elif self.game_type in ["movie"]:
+            self.action = "finish, get_movie_alternative_titles, get_movie_cast, get_movie_crew, get_movie_details, get_movie_keywords, get_movie_production_companies, get_movie_production_countries, get_movie_translation, get_person_cast, get_person_crew, get_person_details, get_person_external_ids, get_search_movie, get_search_person"
+        elif self.game_type in ["weather"]:
+            self.action = "finish, get_air_quality_level, get_current_air_quality_index, get_current_rain, get_current_snow, get_current_temp, get_distance, get_elevation, get_historical_air_quality_index, get_historical_rain, get_historical_snow, get_historical_temp, get_latitude_longitude, get_rain_forecast, get_snow_forecast, get_temp_forecast, get_user_current_date, get_user_current_location"
+        else:
+            self.action = "skipped"
+            
+        self.attempted = None
+        # placeholder for last action
+        self.last_step = None
+
+        # memory
+        self.memory = {}
+        # iter containers
+        self.block_list = print_order.split("|") #["goal", "plan", "observation", "attempted"]
+        
+        # create the starter
+        self.history = []
+        self.history.append(
+            {
+                "role": "user",
+                "content": self.fill_template(),
+                "tag": 0,  # 0 == start or instrctions
+            }
+        )
+
+    def step(self, action):
+        # append history
+        #done = False
+        action_exec = action
+
+        # find pattern
+        rule1 = action_exec.find("</observation_update>") > -1
+        rule2 = action_exec.find("<action_update>") > -1
+        rule3 = action_exec.find("</action_update>") > -1
+        rule4 = action_exec.find("<progress_update>") > -1
+        rule5 = action_exec.find("</progress_update>") > -1
+
+        # if follow the rule
+        if rule1 and rule2 and rule3 and rule4 and rule5:
+            # trigger the selected action 
+            self.history.append(
+                {"role": "assistant", "content": action_exec, "tag": -1} # -1 as a placeholder
+            )
+
+            ## update saved observation
+            mstart = 0
+            mend = action_exec.find("</observation_update>")
+
+            if not (mstart == -1 or mend == -1 or mend < mstart):
+                memory_content = action_exec[mstart:mend].strip()
+                json_start = memory_content.rfind("{")
+                if json_start > -1:
+                    update = json.loads(memory_content[json_start:].strip())
+                    for key, value in update.items():
+                        if (len(value) > 0) and (value != "**full content**"):
+                            self.memory[key] = value
+                        elif (len(value) > 0) and (value == "**full content**"):
+                            #self.memory[key] = action_send + " got " + msg_action.state.replace("Give me one action.", "").strip()
+                            self.memory[key] = "Action: {}".format(self.last_step) + " got " + self.observation
+                        else:
+                            if key in self.memory.keys():
+                                del self.memory[key]
+
+            # extract plan
+            plan = action_exec.split("<progress_update>")[1].split("</progress_update>")[0].strip()
+            if plan == self.plan:
+                reward_tag = 1  # 1 == same state, last step is not useful
+            else:
+                reward_tag = 2  # 2 == state transition successful, last step is useful
+            # extract action
+            self.last_step = action_exec.split("<action_update>")[1].split("</action_update>")[0].strip()
+            action_send = "Action: {}".format(self.last_step)
+            # take the action
+            msg_action = self.client.step(action_send)            
+            self.done = msg_action.done
+            # observe feedback and update states
+            msg = self.client.observe()
+            if reward_tag == 1:
+                if self.attempted is None:
+                    self.attempted = self.last_step
+                else:
+                    self.attempted += ",{}".format(self.last_step)
+            else:
+                if self.plan_history is None:
+                    self.plan_history = plan
+                else:
+                    self.plan_history += ",{}".format(plan)
+                self.plan = plan
+                self.attempted = self.last_step
+
+            ## update last observation
+            if self.game_type == "alfworld":
+                self.observation = msg.split("AVAILABLE ACTIONS:")[0].strip()
+                #msg_mem = self.client.step("inventory").state
+                #self.memory = msg_mem
+                self.action = msg.split("AVAILABLE ACTIONS:")[-1].strip()
+            elif self.game_type == "textcraft":
+                self.observation = msg#["observation"]
+                #msg_mem = self.client.step("inventory").state
+                #self.memory = msg_mem.replace("Inventory:", "").strip()
+            elif self.game_type == "babyai":
+                msg = self.client.observe().split("\n")[0]
+                self.observation = msg
+                #if len(msg) > 2:
+                #    temp_mem = msg[-2].strip() + "."
+                #    if temp_mem != "Please check valid actions.":
+                #        self.memory = temp_mem
+            elif self.game_type == "sciworld":
+                self.observation = msg
+                msg_lr = self.client.step("look around").state
+                self.action = msg_lr
+            elif self.game_type == "maze":
+                self.observation = msg_action.state
+            elif self.game_type in ["movie", "weather"]:
+                self.observation = msg_action.state.replace("Give me one action.", "").strip()
+                #if self.memory == "None":
+                #    self.memory = ""
+                #self.memory += f"Action: {self.last_step}\n{self.observation}\n\n"
+            elif self.game_type == "wordle":
+                if not msg == "invalid word":
+                    self.observation = msg.strip()
+
+            # if done
+            if self.done:
+                reward_tag = 3  # 3 == task successful, last step is useful
+                
+            # update history
+            self.history.append(
+                {
+                    "role": "user",
+                    "content": self.fill_template(),
+                    "tag": reward_tag,  # either 1 or 2
+                }
+            )
+            if self.done:
+                self.save(True)
+        # if not follow the rule
+        else:
+            # update history with failed attempt
+            self.history.append(
+                {"role": "user", "content": action, "tag": -2}  # not allowed actions
+            )
+            self.observation = "Nothing happens."
+            self.history.append(
+                {
+                    "role": "assistant",
+                    "content": self.fill_template(),
+                    "tag": -2,  # not allowed actions
+                }
+            )
+
+        # if max_iter reached
+        if (not self.done) and (len(self.history) > 2 * self.max_iter):
+            self.save(False)
+            self.done = True  # exhausted
+        return self.done  # Ture if finished or exhausted
+
+    def fill_template(self):
+        # fill template
+        template = ""
+        #self.content_list = [getattr(self, block) for block in self.block_list]
+        self.content_list = [getattr(self, block) if block != "plan" else getattr(self, "plan_history") for block in self.block_list]
+        
+        # map to natural language
+        #goal|plan|observation|action|memory|attempted
+        block_map = {
+            "goal": "goal",
+            "plan": "progress",
+            "observation": "last_observation",
+            "memory": "saved_observation",
+            "action": "available_action",
+            "attempted": "attempted_action"
+        }
+        
+        for block, content in zip(self.block_list, self.content_list):
+            tag = block_map.get(block, block)
+            if block == "memory":
+                content = json.dumps(content, indent=2, ensure_ascii=False)
+            template += "<{}>\n{}\n</{}>\n\n".format(tag, str(content), tag)
+        template += "<observation_update>\n"
+        self.template = template
+        return template
+
+    def save(self, status):
+        json_obj = {
+            "task_type": self.task_type,
+            "id": self.idx,
+            "conversations": self.history,
+        }
+        if type(self.task_type) == str:
+            task_type = self.task_type
+        else:
+            task_type = str(self.idx)
+        with open(
+            "{}/{}-{}-{}.json".format(
+                self.save_path,
+                task_type.replace("/", "_"),
+                str(status),
+                "man"#str(uuid.uuid4()).split("-")[0],
+            ),
+            "w",
+        ) as handle:
+            json.dump(json_obj, handle)
+
+
 class SciworldEnvClient:
     def __init__(self, env_server_base: str, *args, timeout: int = 300, **kwargs):
         super().__init__(*args, **kwargs)
@@ -741,68 +1029,6 @@ class TextCraftEnvClient:
         )
         return response
 
-class WeatherEnvClient():
-
-    def __init__(
-        self, env_server_base: str, *args, timeout: int = 300, **kwargs
-    ):
-        super().__init__(*args, **kwargs)
-        self.env_server_base = env_server_base
-        self.timeout = timeout
-        #self.data_len = data_len
-        self.id = 0
-        data = dict()
-        data["id"] = 0
-        ok = requests.post(
-            f"{self.env_server_base}/create",
-            json=data,
-            timeout=self.timeout,
-        )
-        if ok.status_code != 200:
-            raise RequestException(f"Failed to create environment: {ok}")
-
-        self.env_id = ok.json()
-
-    #def __len__(self):
-    #    return self.data_len
-
-    def _post(self, path: str, data: dict[str, Any]) -> dict[str, Any]:
-        data["env_idx"] = self.env_id
-        res = requests.post(
-            f"{self.env_server_base}/{path}",
-            json=data,
-            timeout=self.timeout,
-        )
-        assert res.status_code == 200
-        return res.json()
-
-    def _get(self, path: str) -> dict[str, Any]:
-        res = requests.get(
-            f"{self.env_server_base}/{path}?env_idx={self.env_id}",
-            timeout=self.timeout,
-        )
-        assert res.status_code == 200
-        return res.json()
-
-    def observe(self) -> dict[str, Any]:
-        response = self._get("observation")
-        return response
-
-    def step(self, action: str) -> StepOutput:
-        # action is the original output of llm
-        response = self._post("step", {"action": action})
-        return StepOutput(
-            state=response["observation"],
-            reward=response["reward"],
-            done=response["done"],
-        )
-
-    def reset(self, id: int) -> dict[str, Any]:
-        self.id = id
-        response = self._post("reset", {"id": self.id})
-        return response
-
-
 class BabyAIEnvClient:
     def __init__(self, env_server_base: str, *args, timeout: int = 300, **kwargs):
         super().__init__(*args, **kwargs)
@@ -869,373 +1095,5 @@ class BabyAIEnvClient:
             "reward": response["reward"],
             "score": response["score"],
             "done": response["done"],
-        }
-        return response
-
-class Env_Conn_Full:
-    def __init__(
-        self,
-        client,
-        idx,
-        save_path="traj",
-        max_iter=30,
-        game_type="alfworld",
-        print_order = "goal|plan|observation|action|memory|attempted"
-    ):
-        # save parameters
-        self.client = client
-        self.idx = idx
-        self.save_path = save_path
-        self.max_iter = max_iter
-        self.game_type = game_type
-        self.done = False
-
-        # init
-        msg = self.client.reset(idx)
-        if self.game_type == "alfworld":
-            self.task_type = msg["task_type"]
-            self.goal = msg["observation"].split("\n")[-1].split(":")[-1].strip()
-            self.observation = msg["observation"].split("\n")[0].strip().split("Looking quickly around you")[0].strip()
-        elif self.game_type == "sciworld":
-            self.task_type = msg["task_name"] + "_" + str(msg["var_num"]) + "_" + str(idx)
-            self.goal = msg["task_description"]
-            self.observation = "None" #msg["observation"]
-        elif self.game_type == "babyai":
-            self.task_type = "babyai_" + str(idx)
-            self.goal = msg["observation"].split("\n")[0].split(":")[-1].strip()
-            self.observation = msg["observation"].split("\n")[1]
-        elif self.game_type == "wordle":
-            self.task_type = "wordle_" + str(idx)
-            obs = client.observe()
-            self.goal = "\n".join(obs.split("\n")[:7]).strip()
-            self.observation = "None"
-        elif self.game_type == "maze":
-            self.task_type = "maze_" + str(idx)
-            self.observation = msg["observation"].split("\n")[-1]
-            self.goal = "\n".join(msg["observation"].split("\n")[:4])
-        elif self.game_type == "movie":
-            self.task_type = "movie_" + str(idx)
-            self.observation = "None"
-            self.goal = msg.split("\n")[1].split(":")[-1].strip()
-        elif self.game_type == "weather":
-            self.task_type = "weather_" + str(idx)
-            self.observation = "None"
-            self.goal = msg.split("\n")[1].split(":")[-1].strip()
-        elif self.game_type == "textcraft":
-            self.task_type = "textcraft" + str(idx)
-            self.goal = msg["observation"].split("\n")[-1].replace("Goal:", "").strip()
-            self.observation = "None"
-        
-        # subgoal
-        self.plan = None 
-        # attempts
-        self.plan_history = None
-
-        # observe
-        msg = self.client.observe()
-        if self.game_type in ["alfworld"]:
-            self.action = msg.split("AVAILABLE ACTIONS:")[-1].strip()
-        elif self.game_type in ["babyai"]:
-            self.action = (
-                msg.split("Available actions: [")[-1][:-1]
-                .replace('"', "")
-                .strip()
-                .strip()
-            )
-        elif self.game_type in ["sciworld"]:
-            self.action = self.client.step("look around").state
-        elif self.game_type in ["wordle"]:
-            self.action = obs.split("```")[1].strip()
-        elif self.game_type in ["textcraft"]: #msg.find("Crafting commands:") > -1:
-            self.action = msg.split("Crafting commands:")[-1].split("Goal")[0].strip()
-        elif self.game_type in ["maze"]:
-            self.action = "move up, move down, move left, move right"
-        elif self.game_type in ["movie"]:
-            self.action = "finish, get_movie_alternative_titles, get_movie_cast, get_movie_crew, get_movie_details, get_movie_keywords, get_movie_production_companies, get_movie_production_countries, get_movie_translation, get_person_cast, get_person_crew, get_person_details, get_person_external_ids, get_search_movie, get_search_person"
-        elif self.game_type in ["weather"]:
-            self.action = "finish, get_air_quality_level, get_current_air_quality_index, get_current_rain, get_current_snow, get_current_temp, get_distance, get_elevation, get_historical_air_quality_index, get_historical_rain, get_historical_snow, get_historical_temp, get_latitude_longitude, get_rain_forecast, get_snow_forecast, get_temp_forecast, get_user_current_date, get_user_current_location"
-        else:
-            self.action = "skipped"
-            
-        self.attempted = None
-        # placeholder for last action
-        self.last_step = None
-
-        # memory
-        self.memory = "None"
-        if self.game_type in ["alfworld", "sciworld"]:
-            msg = self.client.step("inventory").state
-            self.memory = msg
-        if self.game_type in ["babyai"]:
-            self.memory = "You are not carrying anything."
-        elif self.game_type in ["wordle"]:
-            self.wordle_mem = {
-                "pc": ["_"] * 5,
-                "cl": [],
-                "el": []
-            }
-            pc = " ".join(self.wordle_mem["pc"])
-            cl = " ".join(self.wordle_mem["cl"])
-            el = " ".join(self.wordle_mem["el"])
-            self.memory = f"Known position constraints: {pc}\nConfirmed letters: {cl}\nExcluded letters: {el}"
-
-        # iter containers
-        self.block_list = print_order.split("|") #["goal", "plan", "observation", "attempted"]
-        
-        # create the starter
-        self.history = []
-        self.history.append(
-            {
-                "role": "user",
-                "content": self.fill_template(),
-                "tag": 0,  # 0 == start or instrctions
-            }
-        )
-
-    def step(self, action):
-        # append history
-        #done = False
-        action_exec = action
-
-        # find pattern
-        rule1 = action_exec.find("</proposal>") > -1
-        rule2 = action_exec.find("<step>") > -1
-        rule3 = action_exec.find("</step>") > -1
-
-        # if follow the rule
-        if rule1 and rule2 and rule3:
-            # trigger the selected action 
-            self.history.append(
-                {"role": "assistant", "content": action_exec, "tag": -1} # -1 as a placeholder
-            )
-            # extract plan
-            plan = action_exec.split("</proposal>")[0].strip()
-            if plan == self.plan:
-                reward_tag = 1  # 1 == same state, last step is not useful
-            else:
-                reward_tag = 2  # 2 == state transition successful, last step is useful
-            # extract action
-            self.last_step = action_exec.split("<step>")[1].split("</step>")[0].strip()
-            action_send = "Action: {}".format(self.last_step)
-            # take the action
-            msg_action = self.client.step(action_send)            
-            self.done = msg_action.done
-            # observe feedback and update states
-            msg = self.client.observe()
-            if reward_tag == 1:
-                if self.attempted is None:
-                    self.attempted = self.last_step
-                else:
-                    self.attempted += ",{}".format(self.last_step)
-            else:
-                if self.plan_history is None:
-                    self.plan_history = plan
-                else:
-                    self.plan_history += ",{}".format(plan)
-                self.plan = plan
-                self.attempted = self.last_step
-            
-            if not self.done:
-                if self.game_type == "alfworld":
-                    self.observation = msg.split("AVAILABLE ACTIONS:")[0].strip()
-                    msg_mem = self.client.step("inventory").state
-                    self.memory = msg_mem
-                    self.action = msg.split("AVAILABLE ACTIONS:")[-1].strip()
-                elif self.game_type == "textcraft":
-                    self.observation = msg#["observation"]
-                    msg_mem = self.client.step("inventory").state
-                    self.memory = msg_mem.replace("Inventory:", "").strip()
-                elif self.game_type == "babyai":
-                    msg = self.client.observe().split("\n")[0]
-                    msg = msg.split("<observation>")[-1].split("</observation>")[0].split(".")
-                    if len(msg) > 2:
-                        temp_mem = msg[-2].strip() + "."
-                        if temp_mem != "Please check valid actions.":
-                            self.memory = temp_mem
-                elif self.game_type == "sciworld":
-                    self.observation = msg
-                    msg_mem = self.client.step("inventory").state
-                    self.memory = msg_mem
-                    msg_lr = self.client.step("look around").state
-                    self.action = msg_lr
-                elif self.game_type == "maze":
-                    self.observation = msg_action.state
-                elif self.game_type in ["movie", "weather"]:
-                    self.observation = msg_action.state.replace("Give me one action.", "").strip()
-                    if self.memory == "None":
-                        self.memory = ""
-                    self.memory += f"Action: {self.last_step}\n{self.observation}\n\n"
-                elif self.game_type == "wordle":
-                    #'b y b b b\n'
-                    #self.wordle_mem = {
-                    #    "pc": ["_"] * 5,
-                    #    "cl": [],
-                    #    "el": []
-                    #}
-                    if not msg == "invalid word":
-                        msg_processed = msg.strip().split(" ")
-                        action_processed = self.last_step.strip().split(" ")
-                        for lpos, letter in enumerate(msg_processed):
-                            if letter == "g":
-                                self.wordle_mem["pc"][lpos] = action_processed[lpos]
-                                action_processed[lpos] not in self.wordle_mem["cl"] and self.wordle_mem["cl"].append(action_processed[lpos])
-                            elif letter == "y":
-                                action_processed[lpos] not in self.wordle_mem["cl"] and self.wordle_mem["cl"].append(action_processed[lpos])
-                            elif letter == "b":
-                                action_processed[lpos] not in self.wordle_mem["el"] and self.wordle_mem["el"].append(action_processed[lpos])
-                    pc = " ".join(self.wordle_mem["pc"])
-                    cl = " ".join(self.wordle_mem["cl"])
-                    el = " ".join(self.wordle_mem["el"])
-                    self.memory = f"Known position constraints: {pc}\nConfirmed letters: {cl}\nExcluded letters: {el}"
-                elif msg.find("Available actions: [") > -1:
-                    self.observation = msg.split("Available actions: [")[0].strip()
-                    self.action = (
-                        msg.split("Available actions: [")[-1][:-1].replace('"', "").strip()
-                    )
-            else:#     if self.done:
-                reward_tag = 3  # 3 == task successful, last step is useful
-                
-            # update history
-            self.history.append(
-                {
-                    "role": "user",
-                    "content": self.fill_template(),
-                    "tag": reward_tag,  # either 1 or 2
-                }
-            )
-            if self.done:
-                self.save(True)
-        # if not follow the rule
-        else:
-            # update history with failed attempt
-            self.history.append(
-                {"role": "user", "content": action, "tag": -2}  # not allowed actions
-            )
-            self.observation = "Nothing happens."
-            self.history.append(
-                {
-                    "role": "assistant",
-                    "content": self.fill_template(),
-                    "tag": -2,  # not allowed actions
-                }
-            )
-
-        # if max_iter reached
-        if (not self.done) and (len(self.history) > 2 * self.max_iter):
-            self.save(False)
-            self.done = True  # exhausted
-        return self.done  # Ture if finished or exhausted
-
-    def fill_template(self):
-        # fill template
-        template = ""
-        #self.content_list = [getattr(self, block) for block in self.block_list]
-        self.content_list = [getattr(self, block) if block != "plan" else getattr(self, "plan_history") for block in self.block_list]
-        for block, content in zip(self.block_list, self.content_list):
-            template += "<{}>\n{}\n</{}>\n\n".format(block, str(content), block)
-        template += "<proposal>\n"
-        self.template = template
-        return template
-
-    def save(self, status):
-        json_obj = {
-            "task_type": self.task_type,
-            "id": self.idx,
-            "conversations": self.history,
-        }
-        if type(self.task_type) == str:
-            task_type = self.task_type
-        else:
-            task_type = str(self.idx)
-        with open(
-            "{}/{}-{}-{}.json".format(
-                self.save_path,
-                task_type.replace("/", "_"),
-                str(status),
-                "man"#str(uuid.uuid4()).split("-")[0],
-            ),
-            "w",
-        ) as handle:
-            json.dump(json_obj, handle)
-
-
-@dataclass
-class StepOutput:
-    state: str
-    reward: float
-    done: bool
-
-class AlfWorldEnvClient():
-    def __init__(
-        self,
-        env_server_base: str,
-        *args,
-        #data_len: int = 4096, # retired
-        timeout: int = 300,
-        **kwargs,
-    ):
-        self.env_server_base = env_server_base
-        self.timeout = timeout
-
-        ok = requests.post(f"{self.env_server_base}/create", timeout=self.timeout)
-        if ok.status_code != 200:
-            raise RequestException(f"Failed to create environment: {ok}")
-
-        ok = ok.json()
-        print(ok)
-        self.env_id = ok["id"]
-        self.info = None
-
-    def _post(self, path: str, data: dict[str, Any]) -> dict[str, Any]:
-        data["id"] = self.env_id
-        res = requests.post(
-            f"{self.env_server_base}/{path}",
-            json=data,
-            timeout=self.timeout,
-        )
-        assert res.status_code == 200
-        return res.json()
-
-    def _get(self, path: str) -> dict[str, Any]:
-        res = requests.get(
-            f"{self.env_server_base}/{path}?id={self.env_id}",
-            timeout=self.timeout,
-        )
-        assert res.status_code == 200
-        return res.json()
-
-    def observe(self) -> str:
-        return f"{self.info['observation']}\nAVAILABLE ACTIONS: {','.join(self.info['available_actions'])}"
-
-    def step(self, action: str) -> StepOutput:
-        if action.endswith("</s>"):
-            action = action[:-5]
-        _action = action.split("Action:")
-        if len(_action) > 1:
-            action = _action[1].strip()
-        else:
-            action = _action[0].strip()
-        print(f"Action: {action}")
-        response = self._post("step", {"action": action})
-        print(response)
-        self.info = {
-            "observation": response["observation"],
-            "available_actions": response["available_actions"],
-            "reward": response["reward"],
-            "done": response["done"],
-        }
-        return StepOutput(
-            state=response["observation"],
-            reward=response["reward"],
-            done=response["done"],
-        )
-
-    def reset(self, game: int, world_type: str = "Text") -> dict[str, Any]:
-        response = self._post("reset", {"game": game, "world_type": world_type})
-        self.info = {
-            "observation": response["observation"],
-            "available_actions": response["available_actions"],
-            "reward": 0,
-            "done": False,
         }
         return response
