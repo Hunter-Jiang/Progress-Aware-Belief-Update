@@ -1,7 +1,5 @@
 # ProgressAwareBeliefUpdate
 
-Official implementation of **PABU: Progress-Aware Belief Update for Efficient LLM Agents**.
-
 <p align="center">
   📃 <a href="https://arxiv.org/pdf/2602.09138" target="_blank">Paper</a > • 🌐 <a href="https://pabu-agent.github.io/" target="_blank">Project Page</a > • 🤗 <a href="https://huggingface.co/datasets/HunterJiang97/PABU-Data" target="_blank">PABU-Data</a > • 🤗 <a href="https://huggingface.co/HunterJiang97/PABU-Agent-8B" target="_blank">Model (PABU-Agent-8B)</a ><br>
 </p>
